@@ -1,0 +1,6 @@
+# TURZX smart displays (Luminary Micro VID 1cbe): allow logged-in users access
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0088", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0080", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0288", MODE="0660", TAG+="uaccess"
+# keep USB autosuspend off for the display (avoids dropouts)
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1cbe", ATTR{idProduct}=="0088", TEST=="power/control", ATTR{power/control}="on"

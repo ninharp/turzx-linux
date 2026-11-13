@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turzx-linux"
+version = "0.1.0"
+description = "Linux driver/player for TURZX USB smart displays (8.8\" 480x1920)"
+requires-python = ">=3.10"
+dependencies = ["pyusb>=1.2", "pycryptodome>=3.15", "Pillow>=10", "psutil>=5.9", "fonttools>=4", "numpy"]
+
+[project.optional-dependencies]
+desktop = ["python-xlib"]
+editor = ["PySide6"]
+
+[project.scripts]
+turzx = "turzx.cli:main"
+
+[tool.setuptools]
+packages = ["turzx"]

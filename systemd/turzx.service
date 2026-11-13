@@ -1,0 +1,17 @@
+# User service:  systemctl --user enable --now turzx.service
+# Edit ~/.config/turzx/turzx.env to choose the mode, e.g.
+#   TURZX_ARGS=theme "/home/USER/.local/share/turzx/theme/4801920/Dragon Ball.turtheme"
+[Unit]
+Description=TURZX USB display
+After=graphical-session.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/turzx/turzx.env
+Environment=TURZX_ARGS=info
+ExecStart=/bin/sh -c 'exec turzx $TURZX_ARGS'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
