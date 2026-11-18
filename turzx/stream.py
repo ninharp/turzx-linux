@@ -102,7 +102,8 @@ class FFmpegStreamer:
                "-vf", vf, "-r", str(fps), "-an", "-c:v", "mjpeg", "-q:v", str(self.quality),
                "-f", "image2pipe", "-"]
         log.debug("ffmpeg: %s", " ".join(cmd))
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        threading.Thread(target=self._log_stderr, args=(self.proc,), daemon=True).start()
         n = 0
         t0 = time.monotonic()
         try:
@@ -118,6 +119,14 @@ class FFmpegStreamer:
                     log.info("%.1f fps", n / (time.monotonic() - t0))
         finally:
             self.stop()
+
+    def _log_stderr(self, proc: subprocess.Popen) -> None:
+        """Forward ffmpeg errors to the log, except the noise of a requested stop."""
+        assert proc.stderr
+        for raw in proc.stderr:
+            line = raw.decode(errors="replace").rstrip()
+            if line and not self._stop.is_set():
+                log.warning("ffmpeg: %s", line)
 
     def stop(self) -> None:
         self._stop.set()

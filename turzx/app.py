@@ -56,9 +56,11 @@ def run_theme(dev: TurzxDevice, path: str, *, rotation: int | None = None, inter
     log.info("theme %s (%dx%d) rotation=%d video=%s", theme.name, theme.width, theme.height, rot, video)
 
     dev.stop_playback()
+    # always: a previous video theme leaves its value overlay on the display,
+    # which would otherwise stay on top of a static theme's background
+    dev.clear_overlay()
     streamer: FFmpegStreamer | None = None
     if video:
-        dev.clear_overlay()
         # theme videos are stored in device orientation already (480x1920)
         vrot = 0
         try:
