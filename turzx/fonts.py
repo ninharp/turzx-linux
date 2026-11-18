@@ -23,9 +23,40 @@ ALIASES = {
     "微软雅黑": ["Noto Sans CJK SC", "WenQuanYi Micro Hei"],
     "bahnschrift": ["DejaVu Sans Condensed", "Liberation Sans Narrow", "DejaVu Sans"],
     "bahnschriftsemibold": ["DejaVu Sans Condensed:bold", "DejaVu Sans:bold"],
+    "bahnschriftsemiboldcondensed": ["DejaVu Sans Condensed:bold", "DejaVu Sans:bold"],
+    "bahnschriftcondensed": ["DejaVu Sans Condensed", "DejaVu Sans"],
     "segoeui": ["Noto Sans", "DejaVu Sans"],
     "timesnewroman": ["Liberation Serif", "DejaVu Serif"],
     "consolas": ["DejaVu Sans Mono", "Liberation Mono"],
+    # DejaVu Sans descends from Bitstream Vera, which has Verdana-like proportions
+    "verdana": ["DejaVu Sans", "Noto Sans"],
+    "tahoma": ["DejaVu Sans Condensed", "DejaVu Sans"],
+    "calibri": ["Carlito", "Noto Sans"],
+    "cambria": ["Caladea", "Noto Serif"],
+    "couriernew": ["Liberation Mono", "DejaVu Sans Mono"],
+    "georgia": ["Gelasio", "DejaVu Serif"],
+    "trebuchetms": ["DejaVu Sans", "Noto Sans"],
+    "yugothic": ["Noto Sans CJK JP", "Noto Sans CJK SC"],
+    "msgothic": ["Noto Sans CJK JP", "Noto Sans CJK SC"],
+}
+# OS/2 usWinAscent / usWinDescent (per em) of common Windows fonts. GDI+ puts the
+# baseline at the cell ascent of the font the theme names; when that font is
+# substituted on Linux, these keep text at the position the Windows app uses.
+WIN_METRICS = {
+    "verdana": (2059 / 2048, 430 / 2048),
+    "tahoma": (2049 / 2048, 423 / 2048),
+    "arial": (1854 / 2048, 434 / 2048),
+    "timesnewroman": (1825 / 2048, 443 / 2048),
+    "segoeui": (2210 / 2048, 514 / 2048),
+    "consolas": (1884 / 2048, 514 / 2048),
+    "calibri": (1950 / 2048, 550 / 2048),
+    "georgia": (1878 / 2048, 449 / 2048),
+    "couriernew": (1705 / 2048, 615 / 2048),
+    "trebuchetms": (1923 / 2048, 455 / 2048),
+    "impact": (2066 / 2048, 432 / 2048),
+    "comicsansms": (2257 / 2048, 597 / 2048),
+    "microsoftyahei": (2167 / 2048, 536 / 2048),
+    "微软雅黑": (2167 / 2048, 536 / 2048),
 }
 CJK_FALLBACKS = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "Source Han Sans CN"]
 
@@ -131,11 +162,21 @@ class FontIndex:
             pass
         return sorted((f for f in fams if f), key=str.lower)
 
+    def is_installed(self, family: str | None) -> bool:
+        """True if the theme's font itself is available (not a substitute)."""
+        if not family:
+            return False
+        return bool(self.by_name.get(_norm(family))) or bool(self._fc_match(family, False))
+
     @lru_cache(maxsize=256)
     def get(self, family: str | None, size_px: int, bold: bool = False) -> tuple[ImageFont.FreeTypeFont, bool]:
         path, idx, fake_bold = self.resolve(family, bold)
         font = ImageFont.truetype(path, max(1, size_px), index=idx)
         asc, desc = _win_metrics(path, idx)
+        key = _norm(family or "")
+        win = WIN_METRICS.get(key) or WIN_METRICS.get(family or "")
+        if win and not self.is_installed(family):
+            asc, desc = win  # substitute font: keep the original font's line placement
         # GDI+ places the line box top at y and the baseline at the cell
         # ascent (OS/2 usWinAscent), not at the hhea ascender FreeType uses.
         font.gdi_ascent = asc * size_px if asc else font.getmetrics()[0]

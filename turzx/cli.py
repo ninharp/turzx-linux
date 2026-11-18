@@ -10,6 +10,18 @@ DEFAULT_FONT_DIRS = [os.path.expanduser("~/.local/share/turzx/fonts")]
 DEFAULT_VIDEO_DIRS = [os.path.expanduser("~/.local/share/turzx/video")]
 
 
+def _with_settings(cli_dirs: list[str], key: str, defaults: list[str]) -> list[str]:
+    """Command line dirs first, then the ones in settings.json (also used by the
+    service and saved by the editor), then the defaults."""
+    from .control import load_settings
+
+    out: list[str] = []
+    for d in list(cli_dirs) + list(load_settings().get(key, [])) + defaults:
+        if d and d not in out:
+            out.append(d)
+    return out
+
+
 def _rot(v: str) -> int:
     r = int(v)
     if r not in (0, 90, 180, 270):
@@ -134,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "editor":
         from .editor import run
 
-        return run(a.file, a.font_dir + DEFAULT_FONT_DIRS, a.video_dir + DEFAULT_VIDEO_DIRS)
+        return run(a.file, _with_settings(a.font_dir, "font_dirs", DEFAULT_FONT_DIRS),
+                   _with_settings(a.video_dir, "video_dirs", DEFAULT_VIDEO_DIRS))
     if a.cmd == "windows":
         from .x11windows import list_windows
 
@@ -212,8 +225,8 @@ def main(argv: list[str] | None = None) -> int:
                 print("Display borrowed from the turzx service; it continues its theme when this ends.")
             if a.cmd == "theme":
                 app.run_theme(dev, a.file, rotation=a.rotate, interval=a.interval,
-                              video_dirs=a.video_dir + DEFAULT_VIDEO_DIRS,
-                              font_dirs=a.font_dir + DEFAULT_FONT_DIRS, no_video=a.no_video, stop=stop)
+                              video_dirs=_with_settings(a.video_dir, "video_dirs", DEFAULT_VIDEO_DIRS),
+                              font_dirs=_with_settings(a.font_dir, "font_dirs", DEFAULT_FONT_DIRS), no_video=a.no_video, stop=stop)
             elif a.cmd == "video":
                 rot = a.rotate
                 if rot is None:
@@ -322,7 +335,7 @@ def _preview(a) -> int:
     s = Sensors()
     time.sleep(1.0)
     s.update()
-    img = Renderer(t, s, FontIndex(a.font_dir + DEFAULT_FONT_DIRS)).render()
+    img = Renderer(t, s, FontIndex(_with_settings(a.font_dir, "font_dirs", DEFAULT_FONT_DIRS))).render()
     s.close()
     if a.device:
         img = to_device(img, 480, 1920)
