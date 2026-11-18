@@ -21,10 +21,13 @@ log = logging.getLogger(__name__)
 
 
 class StopFlag:
-    def __init__(self):
+    """Stop request for a running mode; by default also set by Ctrl+C / SIGTERM."""
+
+    def __init__(self, signals: bool = True):
         self.ev = threading.Event()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: self.ev.set())
+        if signals:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, lambda *_: self.ev.set())
 
     def wait(self, t: float) -> bool:
         return self.ev.wait(t)
@@ -48,6 +51,7 @@ def run_theme(dev: TurzxDevice, path: str, *, rotation: int | None = None, inter
         # app converts GraphList[0] into the video placeholder (Theme.녃)
         theme.items[0].type = "Animation"
     renderer = Renderer(theme, sensors, fonts)
+    renderer.video_background = bool(video)
     rot = rotation if rotation is not None else (90 if theme.landscape else 0)
     log.info("theme %s (%dx%d) rotation=%d video=%s", theme.name, theme.width, theme.height, rot, video)
 
@@ -68,7 +72,7 @@ def run_theme(dev: TurzxDevice, path: str, *, rotation: int | None = None, inter
             pass
         streamer = FFmpegStreamer(dev, vrot)
         fps = theme.frame_rate or 24
-        args = ["-re", "-stream_loop", "-1", "-i", video]
+        args = FFmpegStreamer.input_args(video, fps)
         th = threading.Thread(target=_guard, args=(streamer.run, stop, args, min(fps, 30)), daemon=True)
         th.start()
 
@@ -132,7 +136,7 @@ def play_video(dev: TurzxDevice, path: str, rotation: int = 90, fps: float = 30,
     dev.clear_overlay()
     s = FFmpegStreamer(dev, rotation)
     threading.Thread(target=lambda: (stop.wait(1e9), s.stop()), daemon=True).start()
-    args = ["-re"] + (["-stream_loop", "-1"] if loop else []) + ["-i", path]
+    args = FFmpegStreamer.input_args(path, fps, loop=loop)
     s.run(args, min(fps, 30), fit)
 
 

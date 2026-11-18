@@ -9,15 +9,13 @@ DATA="$HOME/.local/share/turzx"
 
 pip install --user --break-system-packages -e "$HERE" 2>/dev/null || pip install --user -e "$HERE"
 
-mkdir -p "$DATA/fonts" "$DATA/theme" "$DATA/video" "$HOME/.config/turzx" "$HOME/.config/systemd/user"
+mkdir -p "$DATA/fonts" "$DATA/theme" "$DATA/video" "$HOME/.config/turzx"
 for src in "$WIN" "$THEMES"; do
   [ -n "$src" ] && [ -d "$src" ] || continue
   [ -d "$src/fonts" ] && cp -n "$src/fonts/"* "$DATA/fonts/" 2>/dev/null || true
   [ -d "$src/theme" ] && cp -rn "$src/theme/." "$DATA/theme/"
   [ -d "$src/video" ] && cp -rn "$src/video/." "$DATA/video/"
 done
-cp "$HERE/systemd/turzx.service" "$HOME/.config/systemd/user/"
-[ -f "$HOME/.config/turzx/turzx.env" ] || echo 'TURZX_ARGS=info' > "$HOME/.config/turzx/turzx.env"
 
 echo
 echo "Done. For USB access without root, once (as root):"
@@ -26,3 +24,4 @@ echo "Test:      turzx info"
 echo "Theme:     turzx theme \"$DATA/theme/4801920/Dragon Ball.turtheme\" --video-dir $DATA/video/4801920"
 echo "Window:    turzx desktop --window pick"
 echo "Editor:    turzx editor"
+echo "Service:   turzx service install --theme \"$DATA/theme/4801920/Dragon Ball.turtheme\""

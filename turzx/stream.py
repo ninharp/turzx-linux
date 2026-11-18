@@ -82,6 +82,17 @@ class FFmpegStreamer:
         f.append("format=yuvj420p")
         return ",".join(f)
 
+    @staticmethod
+    def input_args(path: str, fps: float, loop: bool = True, realtime: bool = True) -> list[str]:
+        """ffmpeg input options. Raw H.264 streams (the Windows app's '.h264'
+        files) carry no timing, so they get the theme frame rate."""
+        args = ["-re"] if realtime else []
+        if path.lower().endswith((".h264", ".264")):
+            args += ["-f", "h264", "-framerate", str(fps or 24)]
+        if loop:
+            args += ["-stream_loop", "-1"]
+        return args + ["-i", path]
+
     def run(self, input_args: list[str], fps: float, scale_mode: str = "cover",
             extra_filters: str | None = None) -> None:
         vf = self.build_filters(scale_mode)

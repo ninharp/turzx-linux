@@ -2,7 +2,8 @@
 
 Conventions taken from the decompiled app (see docs/PROTOCOL.md):
 * canvas = theme.width x theme.height, transparent; items drawn in list order;
-  'Animation' and hidden items are skipped (video is the background layer).
+  Hidden items are skipped. 'Animation' (video placeholder) is skipped while a
+  video plays behind the frame; otherwise its still image is the background.
 * GDI+ fonts are in points on a 96-dpi canvas -> px = pt * 4/3.
 * DrawString adds ~1/6 em horizontal padding; posY is the top of the line box,
   the baseline sits at the font's OS/2 winAscent.
@@ -99,6 +100,8 @@ class Renderer:
         self.bboxes: dict[int, tuple[float, float, float, float]] = {}
         # False = re-draw only (e.g. while editing): chart histories don't advance
         self.update_values = True
+        # True while the theme video is shown behind the rendered frame
+        self.video_background = False
 
     # ------------------------------------------------------------------
     def render(self, background: Image.Image | None = None, include_hidden: bool = False) -> Image.Image:
@@ -109,7 +112,15 @@ class Renderer:
             canvas.alpha_composite(background.convert("RGBA").resize((t.width, t.height)))
         self.bboxes = {}
         for it in t.items:
-            if it.type == "Animation" or (it.hidden and not include_hidden):
+            if it.hidden and not include_hidden:
+                continue
+            if it.type == "Animation":
+                if self.video_background:
+                    continue
+                # video missing / not playing: show the placeholder's still frame
+                bb = self._draw_Image(canvas, it)
+                if bb:
+                    self.bboxes[id(it)] = bb
                 continue
             compute(it, self.sensors)  # cheap: uses the sensors' cached values
             fn = getattr(self, "_draw_" + it.type, None)

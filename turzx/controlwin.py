@@ -227,6 +227,10 @@ class ControlWindow(QWidget):
         self.play_b.setEnabled(False)
 
         def work():
+            st = request("status", timeout=2)
+            if st and st.get("daemon"):  # background service: just switch its theme
+                self.bridge.done.emit("play", request("play", path=path, timeout=10) or {"ok": False})
+                return
             if request("stop", timeout=5) is not None:
                 for _ in range(50):  # wait until the old player released the display
                     if request("status", timeout=1) is None:

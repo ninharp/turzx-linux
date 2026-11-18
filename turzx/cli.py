@@ -18,12 +18,16 @@ def _rot(v: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="turzx", description=__doc__)
+    from . import __version__
+
+    ap = argparse.ArgumentParser(prog="turzx", description=__doc__,
+                                 epilog=f"turzx {__version__} - 'turzx --version' shows details")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("-V", "--version", action="store_true", help="show version information and exit")
     ap.add_argument("--serial", help="select a display by USB serial number")
     ap.add_argument("--brightness", type=int, default=None,
                     help="brightness 0-100 for this run (default: last value set, initially 80)")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
 
     sub.add_parser("info", help="find the display and show its firmware")
     p = sub.add_parser("brightness", help="set brightness (also while a theme/video/desktop is running)")
@@ -81,6 +85,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-cursor", action="store_true")
 
     sub.add_parser("reboot", help="reboot the display (a running theme continues afterwards)")
+    p = sub.add_parser("play", help="switch the background service to a theme (and remember it); "
+                                    "without FILE: continue the service theme")
+    p.add_argument("file", nargs="?")
+    sub.add_parser("daemon", help="run the background service in the foreground (used by systemd)")
+    p = sub.add_parser("service", help="manage the systemd user service")
+    p.add_argument("action", choices=["install", "uninstall", "status", "restart"])
+    p.add_argument("--theme", help="theme the service plays")
+    p.add_argument("--font-dir", action="append", default=[], help="font directory for the service")
+    p.add_argument("--video-dir", action="append", default=[], help="theme video directory for the service")
     p = sub.add_parser("editor", help="graphical theme editor")
     p.add_argument("file", nargs="?", help=".turzx or .turtheme to open")
     p.add_argument("--font-dir", action="append", default=[])
@@ -91,6 +104,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--output", default="turzx-nvidia-setup.sh")
 
     a = ap.parse_args(argv)
+    if a.version:
+        from . import version_text
+
+        print(version_text())
+        return 0
+    if not a.cmd:
+        ap.print_help()
+        return 1
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     for noisy in ("fontTools", "PIL"):
@@ -98,8 +119,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "preview":
         return _preview(a)
-    if a.cmd in ("brightness", "status", "off", "on", "stop", "reboot"):
+    if a.cmd in ("brightness", "status", "off", "on", "stop", "reboot", "play"):
         return _control(a)
+    if a.cmd == "daemon":
+        from .daemon import Daemon
+
+        return Daemon(a.serial, DEFAULT_FONT_DIRS, DEFAULT_VIDEO_DIRS).run()
+    if a.cmd == "service":
+        return _service(a)
     if a.cmd == "control":
         from .controlwin import run
 
@@ -119,19 +146,37 @@ def main(argv: list[str] | None = None) -> int:
 
         return write_setup(a.output, a.connector)
 
-    from .device import TurzxDevice, TurzxError
+    from .control import Borrow, request
+    from .device import TurzxError
 
+    if a.cmd == "info":
+        r = request("status", timeout=2)
+        if r and r.get("ok") and r.get("firmware"):  # display in use: ask its owner
+            from . import __version__
+
+            print(f"Model:    {r.get('model')}")
+            print(f"Firmware: {r.get('firmware')}")
+            print(f"Serial:   {r.get('serial')}")
+            print(f"turzx:    {__version__}")
+            return 0
+
+    borrow = Borrow(hold=a.cmd in ("image", "clear"))
     try:
-        dev = TurzxDevice(serial=a.serial)
+        borrow.__enter__()
+        dev = borrow.open(a.serial)
     except TurzxError as e:
+        borrow.__exit__(None, None, None)
         print(f"Error: {e}", file=sys.stderr)
         return 2
     try:
         info = dev.info
         if a.cmd == "info":
+            from . import __version__
+
             print(f"Model:    {info.model} ({info.width}x{info.height})")
             print(f"Firmware: {info.firmware}")
             print(f"Serial:   {info.serial}")
+            print(f"turzx:    {__version__}")
             return 0
         from . import app
         from .control import ControlServer, Controller
@@ -147,9 +192,11 @@ def main(argv: list[str] | None = None) -> int:
             dev.stop_playback()
             dev.clear_overlay()
             dev.show_image(Image.new("RGB", (dev.width, dev.height)))
+            _hold_hint(borrow)
             return 0
         if a.cmd == "image":
             app.show_image(dev, a.file, a.rotate, a.fit)
+            _hold_hint(borrow)
             return 0
 
         # long running modes: accept control commands while playing
@@ -160,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             or a.__dict__.get("region") or a.__dict__.get("virtual") or ""
         if a.cmd == "theme":
             ctl.detail = os.path.abspath(a.file)
-        with ControlServer(ctl):
+        with ControlServer(ctl, path=borrow.sock if borrow.active else None):
+            if borrow.active:
+                print("Display borrowed from the turzx service; it continues its theme when this ends.")
             if a.cmd == "theme":
                 app.run_theme(dev, a.file, rotation=a.rotate, interval=a.interval,
                               video_dirs=a.video_dir + DEFAULT_VIDEO_DIRS,
@@ -183,22 +232,67 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         dev.close()
+        borrow.__exit__(None, None, None)
+
+
+def _hold_hint(borrow) -> None:
+    if borrow.active:
+        print("The turzx service pauses until 'turzx play' (continues its theme).")
 
 
 def _control(a) -> int:
     from .control import run_command
 
     kw = {"value": a.percent} if a.cmd == "brightness" else {}
-    r = run_command(a.cmd, serial=a.serial, **kw)
+    if a.cmd == "play":
+        from .control import request, save_setting
+
+        path = os.path.abspath(a.file) if a.file else None
+        if path and not os.path.isfile(path):
+            print(f"Error: no such file: {path}", file=sys.stderr)
+            return 2
+        r = request("play", path=path)
+        if r is None:  # no service running: just remember it for the next start
+            if not path:
+                print("Error: the turzx service is not running ('turzx service install')", file=sys.stderr)
+                return 2
+            save_setting("theme", path)
+            print("No service running - theme saved for the service's next start. "
+                  f"To play it now without the service: turzx theme \"{path}\"")
+            return 0
+    else:
+        r = run_command(a.cmd, serial=a.serial, **kw)
     if not r.get("ok"):
         print(f"Error: {r.get('error')}", file=sys.stderr)
         return 2
     if a.cmd == "status":
         mode = r["mode"] if r["mode"] not in ("", "idle") else "nothing"
-        print(f"Running:    {mode} {r.get('detail') or ''}".rstrip())
+        print(f"Running:    {mode} {r.get('detail') or ''}".rstrip() + ("  (service)" if r.get("daemon") else ""))
         print(f"Brightness: {r['brightness']}%" + (" (backlight off)" if r.get("off") else ""))
         print(f"Display:    {r.get('model')} fw {r.get('firmware')} serial {r.get('serial')}")
     return 0
+
+
+def _service(a) -> int:
+    from . import service
+    from .control import load_settings, save_setting
+
+    if a.action == "install":
+        if a.theme:
+            save_setting("theme", os.path.abspath(a.theme))
+        if a.font_dir:
+            save_setting("font_dirs", [os.path.abspath(d) for d in a.font_dir])
+        if a.video_dir:
+            save_setting("video_dirs", [os.path.abspath(d) for d in a.video_dir])
+        rc = service.install()
+        st = load_settings()
+        print(f"Theme:      {st.get('theme') or '(none - choose one with turzx play FILE or in the editor)'}")
+        return rc
+    if a.action == "uninstall":
+        return service.uninstall()
+    if a.action == "restart":
+        service._systemctl("restart", service.UNIT_NAME)
+    return service.status()
 
 
 def _is_landscape(path: str) -> bool:

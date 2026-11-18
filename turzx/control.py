@@ -27,9 +27,9 @@ DEFAULT_BRIGHTNESS = 80
 SETTINGS_PATH = os.path.expanduser("~/.config/turzx/settings.json")
 
 
-def socket_path() -> str:
+def socket_path(suffix: str = "") -> str:
     base = os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache/turzx")
-    return os.path.join(base, "turzx.sock")
+    return os.path.join(base, f"turzx{suffix}.sock")
 
 
 # --------------------------------------------------------------------- settings
@@ -122,14 +122,14 @@ class Controller:
 
 
 class ControlServer:
-    def __init__(self, controller: Controller):
+    def __init__(self, controller: Controller, path: str | None = None):
         self.ctl = controller
-        self.path = socket_path()
+        self.path = path or socket_path()
         self.sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> "ControlServer":
-        if ping():
+        if ping(self.path):
             log.warning("another turzx process already answers on %s", self.path)
             return self
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -190,13 +190,51 @@ class ControlServer:
         self.close()
 
 
+# --------------------------------------------------------------------- borrowing
+class Borrow:
+    """Borrow the display from the background service, if it is running.
+
+    hold=False: give it back on exit (long running modes).
+    hold=True: keep it after this process ends (one-shot 'image' / 'clear');
+    'turzx play' hands it back to the service."""
+
+    def __init__(self, hold: bool = False):
+        self.hold = hold
+        self.active = False
+        self.sock = socket_path(f"-cli-{os.getpid()}")
+
+    def __enter__(self) -> "Borrow":
+        r = request("status", timeout=2)
+        if r and r.get("daemon"):
+            rr = request("release", timeout=20, pid=0 if self.hold else os.getpid(), socket=self.sock)
+            if not rr or not rr.get("ok"):
+                raise TurzxError(f"the turzx service did not release the display: {(rr or {}).get('error')}")
+            self.active = True
+        return self
+
+    def open(self, serial: str | None = None) -> TurzxDevice:
+        """Open the display; right after a release it may need a moment."""
+        for attempt in range(10 if self.active else 1):
+            try:
+                return TurzxDevice(serial=serial)
+            except TurzxError:
+                if not self.active or attempt == 9:
+                    raise
+                time.sleep(0.5)
+        raise AssertionError("unreachable")
+
+    def __exit__(self, *exc) -> None:
+        if self.active and not self.hold:
+            request("resume", timeout=5)
+
+
 # --------------------------------------------------------------------- client
-def request(cmd: str, timeout: float = 60.0, **kw) -> dict | None:
+def request(cmd: str, timeout: float = 60.0, sock_path: str | None = None, **kw) -> dict | None:
     """Send a command to the running turzx process; None if none is running."""
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(timeout)
-        s.connect(socket_path())
+        s.connect(sock_path or socket_path())
     except OSError:
         return None
     with s, s.makefile("rw", encoding="utf-8") as f:
@@ -206,8 +244,8 @@ def request(cmd: str, timeout: float = 60.0, **kw) -> dict | None:
     return json.loads(line) if line else {"ok": False, "error": "no answer"}
 
 
-def ping() -> bool:
-    r = request("status", timeout=2.0)
+def ping(path: str | None = None) -> bool:
+    r = request("status", timeout=2.0, sock_path=path)
     return bool(r and r.get("ok"))
 
 

@@ -1,17 +1,15 @@
-# User service:  systemctl --user enable --now turzx.service
-# Edit ~/.config/turzx/turzx.env to choose the mode, e.g.
-#   TURZX_ARGS=theme "/home/USER/.local/share/turzx/theme/4801920/Dragon Ball.turtheme"
+# Template only - 'turzx service install' writes the real unit with the
+# correct Python interpreter and source path to ~/.config/systemd/user/.
 [Unit]
-Description=TURZX USB display
-After=graphical-session.target
+Description=TURZX USB display (theme player)
+After=default.target
 
 [Service]
 Type=simple
-EnvironmentFile=-%h/.config/turzx/turzx.env
-Environment=TURZX_ARGS=info
-ExecStart=/bin/sh -c 'exec turzx $TURZX_ARGS'
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env turzx daemon
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=default.target

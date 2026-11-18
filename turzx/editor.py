@@ -30,6 +30,7 @@ from .render import Renderer, to_device
 from .sensors import Sensors
 from .theme import (DATA_LABELS, DATA_NAMES, SCHEMA, SUB_NAMES, TYPE_LABELS, Item, Theme, load_theme,
                     new_item, new_theme, save_turzx)
+from . import __version__
 
 log = logging.getLogger(__name__)
 THEME_DIR = os.path.expanduser("~/.local/share/turzx/themes")
@@ -187,7 +188,15 @@ class PropertyPanel(QScrollArea):
         form.addRow("Name", name)
         form.addRow("Size", QLabel(f"{t.width} x {t.height} ({'landscape' if t.landscape else 'portrait'})"))
         vid = t.find_video(self.editor.video_dirs)
-        form.addRow("Background video", QLabel(os.path.basename(vid) if vid else "(none)"))
+        if vid:
+            vtext = os.path.basename(vid)
+        elif t.video_name:
+            vtext = f"{t.video_name} - not found, still image shown"
+        else:
+            vtext = "(none)"
+        vlabel = QLabel(vtext)
+        vlabel.setWordWrap(True)
+        form.addRow("Background video", vlabel)
         row = QHBoxLayout()
         b1 = QPushButton("Choose video…")
         b1.clicked.connect(self.editor.choose_video)
@@ -382,11 +391,20 @@ class DisplayLink(QObject):
         from .device import TurzxDevice, TurzxError
         from .stream import FFmpegStreamer
 
-        from .control import request
+        from .control import ControlServer, Controller, request, socket_path
 
         streamer = None
+        own_socket = None  # set while the display is borrowed from the service
         r = request("status", timeout=2)
-        if r and r.get("ok"):  # another turzx process plays on the display: take it over
+        if r and r.get("daemon"):  # background service: borrow the display, give it back afterwards
+            self.status.emit("Display: borrowing from the service…")
+            own_socket = socket_path(f"-editor-{os.getpid()}")
+            rr = request("release", timeout=20, pid=os.getpid(), socket=own_socket)
+            if not rr or not rr.get("ok"):
+                self.status.emit(f"Display: service did not release it ({(rr or {}).get('error')})")
+                request("resume", timeout=5)
+                return
+        elif r and r.get("ok"):  # another turzx process plays on the display: take it over
             self.status.emit(f"Display: stopping {r.get('mode')}…")
             request("stop", timeout=5)
             for _ in range(50):
@@ -394,22 +412,29 @@ class DisplayLink(QObject):
                     break
                 time.sleep(0.1)
             time.sleep(0.5)
-        try:
-            dev = TurzxDevice()
-        except Exception as e:  # noqa: BLE001
-            self.status.emit(f"Display: {e}")
+        dev = None
+        for attempt in range(5):
+            try:
+                dev = TurzxDevice()
+                break
+            except Exception as e:  # noqa: BLE001
+                err = e
+                time.sleep(0.5)
+        if dev is None:
+            self.status.emit(f"Display: {err}")
+            if own_socket:
+                request("resume", timeout=5)
             return
-        from .control import ControlServer, Controller
 
         ctl = Controller(dev, mode="editor", detail=self.editor.theme.name)
-        server = ControlServer(ctl).start()
+        server = ControlServer(ctl, path=own_socket).start()
         try:
             ctl.apply_brightness()
             dev.stop_playback()
             dev.clear_overlay()
             if self.video:
                 streamer = FFmpegStreamer(dev, 0 if _is_portrait_video(self.video) else 90)
-                args = ["-re", "-stream_loop", "-1", "-i", self.video]
+                args = FFmpegStreamer.input_args(self.video, self.editor.theme.frame_rate or 24)
                 threading.Thread(target=streamer.run, args=(args, 24), daemon=True).start()
             self.status.emit(f"Display: live ({dev.info.firmware})")
             while not self._stop.wait(1.0):
@@ -430,7 +455,11 @@ class DisplayLink(QObject):
             if streamer:
                 streamer.stop()
             dev.close()
-            self.status.emit("Display: off")
+            if own_socket:
+                request("resume", timeout=5)
+                self.status.emit("Display: back to the service theme")
+            else:
+                self.status.emit("Display: off")
 
 
 def _is_portrait_video(path: str) -> bool:
@@ -520,6 +549,8 @@ class EditorWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock2)
 
         self._build_toolbar()
+        help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction("About turzx…", self.about)
         self.render_timer = QTimer(self)
         self.render_timer.setSingleShot(True)
         self.render_timer.timeout.connect(self.rerender)
@@ -568,6 +599,10 @@ class EditorWindow(QMainWindow):
         self.live_act.setToolTip("Show the edited theme on the display while editing")
         self.live_act.triggered.connect(self.toggle_display)
         dtb.addAction(self.live_act)
+        use_act = QAction("Use as display theme", self)
+        use_act.setToolTip("Let the background service show this theme permanently (saves it first if needed)")
+        use_act.triggered.connect(self.use_as_display_theme)
+        dtb.addAction(use_act)
         dtb.addSeparator()
         self.display_controls = DisplayControls(compact=True)
         dtb.addWidget(self.display_controls)
@@ -606,7 +641,29 @@ class EditorWindow(QMainWindow):
 
     def update_title(self) -> None:
         name = os.path.basename(self.theme.path) if self.theme.path else "untitled"
-        self.setWindowTitle(f"TURZX Theme Editor - {self.theme.name} [{name}]{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"TURZX Theme Editor {__version__} - {self.theme.name} [{name}]"
+                            f"{' *' if self.dirty else ''}")
+
+    def about(self) -> None:
+        import html
+
+        from . import version_info
+        from .control import request
+
+        rows = version_info()
+        r = request("status", timeout=1)
+        if r and r.get("ok"):
+            rows.append(("Display", f"{r.get('model')}, firmware {r.get('firmware')}, serial {r.get('serial')}"))
+            rows.append(("Running", f"{r.get('mode')} {os.path.basename(r.get('detail') or '')}".strip()))
+        table = "".join(f"<tr><td><b>{html.escape(k)}</b>&nbsp;&nbsp;</td><td>{html.escape(str(v))}</td></tr>"
+                        for k, v in rows)
+        QMessageBox.about(self, "About turzx",
+                          f"<h3>turzx {__version__}</h3>"
+                          "<p>Linux driver, theme player and theme editor for TURZX USB displays "
+                          "(8.8&quot; 480&times;1920).</p>"
+                          "<p>The USB protocol, the theme format and the widget drawing were "
+                          "reconstructed from the Windows app; this is not an official TURZX product.</p>"
+                          f"<table>{table}</table>")
 
     def new_theme_dialog(self) -> None:
         if not self.confirm_discard():
@@ -952,6 +1009,7 @@ class EditorWindow(QMainWindow):
     def rerender(self, update_values: bool = False) -> None:
         r = self.renderer
         r.update_values = update_values or self.last_frame is None
+        r.video_background = self.bg_still is not None
         t0 = time.monotonic()
         frame = r.render(include_hidden=False)
         r.update_values = True
@@ -964,6 +1022,47 @@ class EditorWindow(QMainWindow):
         dt = (time.monotonic() - t0) * 1000
         if not self.display.running:
             self.statusBar().showMessage(f"{len(self.theme.items)} widgets, render {dt:.0f} ms")
+
+    def use_as_display_theme(self) -> None:
+        from . import service
+        from .control import load_settings, request, save_setting
+
+        if self.dirty or not self.theme.path:
+            if not self.save():
+                return
+        path = os.path.abspath(self.theme.path)
+        # the service needs the same fonts and videos as the editor
+        st = load_settings()
+        for key, dirs in (("font_dirs", self.font_dirs), ("video_dirs", self.video_dirs)):
+            merged = list(st.get(key, []))
+            for d in dirs:
+                d = os.path.abspath(d)
+                if os.path.isdir(d) and d not in merged:
+                    merged.append(d)
+            save_setting(key, merged)
+        if self.display.running:  # give the display back to the service
+            self.live_act.setChecked(False)
+            self.display.stop()
+        r = request("play", path=path, timeout=10)
+        if r is None:
+            save_setting("theme", path)
+            ans = QMessageBox.question(
+                self, "Background service",
+                "The background service is not running.\n\nInstall and start it now? It shows this theme "
+                "from login on, also when the editor is closed.")
+            if ans != QMessageBox.Yes:
+                return
+            try:
+                service.install()
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.critical(self, "Service", f"Could not install the service: {e}")
+                return
+            self.statusBar().showMessage(f"Service installed, showing {os.path.basename(path)}", 8000)
+        elif not r.get("ok"):
+            QMessageBox.warning(self, "Display", str(r.get("error")))
+        else:
+            self.statusBar().showMessage(f"Display now shows {os.path.basename(path)}", 8000)
+        self.display_controls.refresh()
 
     def toggle_display(self, on: bool) -> None:
         if on:

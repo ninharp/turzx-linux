@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import os
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -279,12 +280,23 @@ class Theme:
         if not self.video_name and not self.video_path:
             return None
         names = [n for n in (self.video_name, os.path.basename((self.video_path or "").replace("\\", "/"))) if n]
+        # the Windows app stores imported videos as "<original>_<timestamp>.h264" or
+        # "<original>.mp4.h264"; downloads usually contain the original file
+        for n in list(names):
+            stem = os.path.splitext(n)[0]
+            for base in {stem, re.sub(r"_\d{6,}$", "", stem)}:
+                if os.path.splitext(base)[1].lower() in _VIDEO_EXT:
+                    names.append(base)
+                else:
+                    names += [base + e for e in (".mp4", ".MP4", ".mov", ".gif", ".webm", ".mkv")]
         theme_dir = os.path.dirname(self.path)
         res = f"{min(self.width, self.height)}{max(self.width, self.height)}"
         dirs = list(search_dirs) + [
             theme_dir,
             os.path.join(os.path.dirname(os.path.dirname(theme_dir)), "video", res),
             os.path.join(os.path.dirname(os.path.dirname(theme_dir)), "video", os.path.basename(theme_dir)),
+            os.path.join(os.path.dirname(theme_dir), "video"),  # flat layout: <pack>/theme, <pack>/video
+            os.path.join(os.path.dirname(theme_dir), "video", res),
             os.path.expanduser(f"~/.local/share/turzx/video/{res}"),
         ]
         for d in dirs:
@@ -292,7 +304,27 @@ class Theme:
                 p = os.path.join(d, n)
                 if os.path.isfile(p):
                     return p
+        return _single_video_near(self.path)
+
+
+_VIDEO_EXT = (".mp4", ".h264", ".264", ".mov", ".mkv", ".webm", ".avi", ".gif", ".m4v")
+
+
+def _single_video_near(theme_path: str) -> str | None:
+    """Downloaded themes often come with the video under a different name than
+    the one stored in the theme. Use it if it is the only video in the theme's
+    folder (or its subfolders)."""
+    if not theme_path:
         return None
+    root = os.path.dirname(os.path.abspath(theme_path))
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        if dirpath[len(root):].count(os.sep) >= 2:
+            dirnames[:] = []
+        found += [os.path.join(dirpath, f) for f in filenames if f.lower().endswith(_VIDEO_EXT)]
+        if len(found) > 1 or len(found) + len(dirnames) > 50:
+            return None
+    return found[0] if len(found) == 1 else None
 
 
 def new_theme(width: int = 1920, height: int = 480, name: str = "New theme") -> Theme:

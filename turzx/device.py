@@ -141,7 +141,13 @@ class TurzxDevice:
                 ) from e
             if e.errno != 16:  # busy = already configured
                 raise
-        usb.util.claim_interface(dev, 0)
+        try:
+            usb.util.claim_interface(dev, 0)
+        except usb.core.USBError as e:
+            if e.errno == 16:
+                raise TurzxError("The display is in use by another program "
+                                 "(the turzx service? see 'turzx status')") from e
+            raise
         self.dev = dev
         self._drain()
         reply = self.command(Cmd.SYNC)
