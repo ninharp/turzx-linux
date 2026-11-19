@@ -5,6 +5,8 @@ display (480×1920, USB `1cbe:0088`). The USB protocol, the theme format and the
 widget drawing logic were reconstructed from the Windows app (`UsbMonitorL.exe`);
 see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
+![Theme made with the editor: CPU/GPU temperature rings, load bars and history charts, clock, RAM, disk and network](docs/images/demo-theme.png)
+
 ## Features
 
 | Command | What it does |
@@ -30,6 +32,51 @@ see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 All modes run until Ctrl+C. For the virtual monitor, the screen layout and
 window positions are saved beforehand and restored on exit.
+
+## Examples
+
+```console
+$ turzx info
+Model:    8.8 inch
+Firmware: turzx_0001_0008
+Serial:   051c60xxxxxxxxxx
+turzx:    0.2.1
+
+$ turzx service install --theme ~/.local/share/turzx/themes/Demo.turzx \
+      --font-dir ../TURZX-V3.1.0-ENG/fonts
+$ turzx status
+Running:    theme /home/me/.local/share/turzx/themes/Demo.turzx  (service)
+Brightness: 82%
+Display:    8.8 inch fw turzx_0001_0008 serial 051c60xxxxxxxxxx
+
+$ turzx service status
+Service:    turzx.service enabled, active
+Logs:       journalctl --user -u turzx.service -f
+
+$ turzx brightness 60          # works while the service plays a theme
+$ turzx off                    # backlight off, the theme keeps running
+$ turzx on
+$ turzx play "../88inchthemeENG/theme/Dragon Ball.turtheme"   # switch the service theme
+
+$ turzx preview ~/.local/share/turzx/themes/Demo.turzx -o demo.png
+demo.png: Demo 1920x480, video: -
+
+$ turzx windows                # window IDs for 'turzx desktop --window'
+  0x1000003  3440x25   @1920,0  xfce4-panel
+  0x140000d  3440x1440 @1920,0  Desktop
+$ turzx desktop --window pick  # then click the window to show
+
+$ turzx --version
+turzx:     0.2.1
+Based on:  TURZX V3.1.0 (UsbMonitorL.exe 4.2.1.3)
+Python:    3.14.4
+System:    Linux 6.12.85-1-MANJARO
+pyusb:     1.3.1
+Pillow:    12.2.0
+PySide6:   6.11.0
+fonttools: 4.62.1
+psutil:    7.2.2
+```
 
 ## Installation
 
@@ -83,6 +130,8 @@ cases.
 
 `turzx editor` opens an editor for your own themes; `.turtheme` files from the
 Windows app can be imported via Open.
+
+![Theme editor: widget list, live preview with the selected ring, properties and the display row](docs/images/editor.png)
 
 * **Left:** widget list. The checkbox shows/hides a widget, ▲/▼ change the
   drawing order, "+ Add" adds a sensor value, text, image, bar, arc/ring,
