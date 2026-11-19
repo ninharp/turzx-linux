@@ -304,10 +304,32 @@ class Theme:
                 p = os.path.join(d, n)
                 if os.path.isfile(p):
                     return p
+        # same name apart from case and the app's timestamp suffixes
+        wanted = {video_key(n) for n in names[:2]}
+        for d in dirs:
+            try:
+                entries = sorted(os.listdir(d))
+            except OSError:
+                continue
+            for f in entries:
+                if f.lower().endswith(_VIDEO_EXT) and video_key(f) in wanted:
+                    return os.path.join(d, f)
         return _single_video_near(self.path)
 
 
 _VIDEO_EXT = (".mp4", ".h264", ".264", ".mov", ".mkv", ".webm", ".avi", ".gif", ".m4v")
+
+
+def video_key(name: str) -> str:
+    """Comparable video name: 'Pacman_12104447.h264', 'pacman.mp4' -> 'pacman';
+    'ASUSBLUE.mp415080535.mp4', 'ASUSBLUE.mp4150805351.mp4' -> 'asusblue'."""
+    s = os.path.basename(name).lower()
+    while True:
+        prev = s
+        s = re.sub(r"(\.(mp4|h264|264|gif|mov|mkv|webm|avi|m4v))+$", "", s)
+        s = re.sub(r"(\.(mp4|h264|gif|mov))?[_\-]?\d{6,}$", "", s)
+        if s == prev:
+            return s.strip(" ._-")
 
 
 def _single_video_near(theme_path: str) -> str | None:
