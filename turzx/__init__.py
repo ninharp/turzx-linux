@@ -1,6 +1,6 @@
 """turzx - Linux driver, theme player and editor for TURZX USB displays."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # where the protocol, theme format and drawing logic were reconstructed from
 BASED_ON = "TURZX V3.1.0 (UsbMonitorL.exe 4.2.1.3)"
