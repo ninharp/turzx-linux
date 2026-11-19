@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
+from .control import load_settings, save_setting
 from .fonts import FontIndex
 from .render import Renderer, to_device
 from .sensors import Sensors
@@ -35,6 +36,40 @@ from . import __version__
 log = logging.getLogger(__name__)
 THEME_DIR = os.path.expanduser("~/.local/share/turzx/themes")
 ADDABLE = ["Data", "Text", "Image", "StatuBar", "ArchBar", "Clock", "Chart"]
+IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
+
+
+def last_dir(kind: str, fallback: str = "") -> str:
+    """Folder the last file dialog of this kind (theme, video, image, export) used."""
+    d = load_settings().get("last_dirs", {}).get(kind)
+    if isinstance(d, str) and os.path.isdir(d):
+        return d
+    return fallback if fallback and os.path.isdir(fallback) else os.path.expanduser("~")
+
+
+def remember_dir(kind: str, path: str) -> None:
+    dirs = load_settings().get("last_dirs")
+    dirs = dirs if isinstance(dirs, dict) else {}
+    dirs[kind] = os.path.dirname(os.path.abspath(path))
+    try:
+        save_setting("last_dirs", dirs)
+    except OSError as e:
+        log.warning("cannot save the last folder: %s", e)
+
+
+def open_file(parent: QWidget, kind: str, title: str, filt: str, fallback: str = "") -> str:
+    """File open dialog that starts in, and remembers, the last folder of this kind."""
+    path, _ = QFileDialog.getOpenFileName(parent, title, last_dir(kind, fallback), filt)
+    if path:
+        remember_dir(kind, path)
+    return path
+
+
+def save_file(parent: QWidget, kind: str, title: str, name: str, filt: str, fallback: str = "") -> str:
+    path, _ = QFileDialog.getSaveFileName(parent, title, os.path.join(last_dir(kind, fallback), name), filt)
+    if path:
+        remember_dir(kind, path)
+    return path
 
 
 def pil_to_qimage(im: Image.Image) -> QImage:
@@ -676,9 +711,7 @@ class EditorWindow(QMainWindow):
     def open_dialog(self) -> None:
         if not self.confirm_discard():
             return
-        start = THEME_DIR if os.path.isdir(THEME_DIR) else os.path.expanduser("~")
-        path, _ = QFileDialog.getOpenFileName(self, "Open theme", start,
-                                              "Themes (*.turzx *.turtheme);;All files (*)")
+        path = open_file(self, "theme", "Open theme", "Themes (*.turzx *.turtheme);;All files (*)", THEME_DIR)
         if path:
             self.open_path(path)
 
@@ -702,8 +735,8 @@ class EditorWindow(QMainWindow):
 
     def save_as(self) -> bool:
         os.makedirs(THEME_DIR, exist_ok=True)
-        default = os.path.join(THEME_DIR, f"{self.theme.name or 'theme'}.turzx")
-        path, _ = QFileDialog.getSaveFileName(self, "Save theme", default, "TURZX theme (*.turzx)")
+        path = save_file(self, "theme", "Save theme", f"{self.theme.name or 'theme'}.turzx",
+                         "TURZX theme (*.turzx)", THEME_DIR)
         if not path:
             return False
         if not path.endswith(".turzx"):
@@ -739,7 +772,7 @@ class EditorWindow(QMainWindow):
         ev.accept()
 
     def export_png(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Export preview", f"{self.theme.name}.png", "PNG (*.png)")
+        path = save_file(self, "export", "Export preview", f"{self.theme.name or 'theme'}.png", "PNG (*.png)")
         if path and self.last_frame is not None:
             img = Image.new("RGBA", self.last_frame.size, (0, 0, 0, 255))
             if self.bg_still is not None:
@@ -749,8 +782,8 @@ class EditorWindow(QMainWindow):
 
     # -- video / background ----------------------------------------------------
     def choose_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Background video", os.path.expanduser("~"),
-                                              "Videos (*.mp4 *.mkv *.webm *.mov *.avi *.gif);;All files (*)")
+        path = open_file(self, "video", "Background video",
+                         "Videos (*.mp4 *.mkv *.webm *.mov *.avi *.gif *.h264);;All files (*)")
         if not path:
             return
         self.push_undo()
@@ -775,8 +808,7 @@ class EditorWindow(QMainWindow):
             self.display.start(None)
 
     def set_background(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Background image", os.path.expanduser("~"),
-                                              "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        path = open_file(self, "image", "Background image", IMAGE_FILTER)
         if not path:
             return
         self.push_undo()
@@ -796,8 +828,7 @@ class EditorWindow(QMainWindow):
         self.refresh_list()
 
     def load_item_image(self, it: Item) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Image", os.path.expanduser("~"),
-                                              "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+        path = open_file(self, "image", "Image", IMAGE_FILTER)
         if path:
             self.push_undo()
             it.image = Image.open(path).convert("RGBA")
@@ -893,8 +924,7 @@ class EditorWindow(QMainWindow):
         if typ == "Text":
             it.p["text"] = "Text"
         if typ in ("Image", "Clock"):
-            path, _ = QFileDialog.getOpenFileName(self, "Image", os.path.expanduser("~"),
-                                                  "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+            path = open_file(self, "image", "Image", IMAGE_FILTER)
             if path:
                 it.image = Image.open(path).convert("RGBA")
             if typ == "Clock":
@@ -1025,7 +1055,7 @@ class EditorWindow(QMainWindow):
 
     def use_as_display_theme(self) -> None:
         from . import service
-        from .control import load_settings, request, save_setting
+        from .control import request
 
         if self.dirty or not self.theme.path:
             if not self.save():
